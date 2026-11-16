@@ -18,15 +18,18 @@
 
 ## 0. Ограничения для РФ — прочитать первым
 
-> **Коротко:** «кирпичей» нет, локальный контроллер и точки работают. Но серверы обновлений Ubiquiti блокируют российские IP. Без обхода обновление через интернет не пройдёт.
+> **Коротко:** «кирпичей» нет, локальный контроллер и точки работают. Часть серверов Ubiquiti блокирует российские IP (`www.ui.com`, `fw-download.ubnt.com`), но **CDN `dl.ui.com`, откуда берутся `.deb` и прошивки, из РФ обычно открывается** — поэтому контроллер чаще всего можно обновить **без VPN**. Автообновление точек кнопкой в Web UI при этом всё равно не работает: оно ходит на заблокированный `fw-download.ubnt.com` (раздел 4).
 
 | Что | Статус в РФ | Что делать |
 |---|---|---|
 | Локальный контроллер на Ubuntu + принятые AP | ✅ Работают как обычно | Можно обновлять |
+| **`dl.ui.com`** — CDN с `.deb` и прошивками | ✅ По сообщениям из РФ **не заблокирован** (в отличие от `www.ui.com` и `fw-download.ubnt.com`) | **Основной источник без VPN.** Проверить: `curl -sI https://dl.ui.com/unifi/<версия>/unifi_sysvinit_all.deb \| head -1` |
 | Серверы прошивок `fw-download.ubnt.com`, `fw-update.ubnt.com`, `fw-update.ui.com` | ❌ `403 Forbidden` / таймаут с RU IP | Качать `.bin` через VPN/прокси или обновлять офлайн (раздел 4) |
-| APT-репозиторий `apt.artifacts.ui.com` | ❌ `403` с RU IP | Ставить `.deb` вручную или через Glenn R. скрипт (раздел 3) |
+| APT-репозиторий `www.ui.com/downloads/unifi/debian` | ❌ `403` с RU IP **и** фактически мёртв для всех: Ubiquiti перестала публиковать там пакеты после 10.0.x, индекс `Packages` пустой | `apt install unifi` больше не рабочий путь. Только прямой `.deb` (раздел 3, Способ 2) |
+| `api.glennr.nl` — архив Glenn R. (Нидерланды) | ⚠️ Проверить у себя: `curl -s "https://api.glennr.nl/api/network-latest?version=latest"` | Запасной источник `.deb` без VPN (раздел 3, Способ 2) |
+| `repo.mongodb.org` | ✅ Доступен, для `focal` есть 4.4/5.0/6.0/7.0/8.0 | Обновление MongoDB без VPN |
+| `github.com`, `raw.githubusercontent.com` | ✅ Доступны | Зеркала скриптов (раздел 3, Способ 3) |
 | Облачный доступ `unifi.ui.com` / SSO-вход | ❌ Блокировки/отключения с RU IP | **Обязательно:** локальный Super Admin + SSH-пароли до обновления! |
-| Скачивание с `dl.ui.com` | ⚠️ Иногда работает напрямую | Если `403` — через VPN |
 
 **Критично до любых действий:**
 
@@ -44,7 +47,8 @@
 - [ ] SSH-пароль устройств записан.
 - [ ] Автообновления AP выключены.
 - [ ] Есть доступ к Ubuntu по SSH.
-- [ ] Подготовлен VPN/прокси для скачивания прошивок (если RU IP).
+- [ ] Проверена доступность хостов (раздел 3, «Проверка за 30 секунд»): `dl.ui.com`, `repo.mongodb.org`, `api.glennr.nl`.
+- [ ] Подготовлен VPN/прокси (например, Outline) — нужен в основном для прошивок AP и если `dl.ui.com` у вас всё же закрыт.
 - [ ] Записаны текущие версии: контроллер (`Settings → System → About`) и AP (`Devices`).
 
 ### Диагностика: узнайте свои версии и пути (5 минут)
@@ -61,7 +65,18 @@ systemctl cat unifi | grep -i dbpath
 - **Путь к данным** — из `dbpath`:
   - `/usr/lib/unifi/data/db` → UniFi **7.x**, бэкапы в `/usr/lib/unifi/data/backup/`
   - `/var/lib/unifi/data/db` → UniFi **8.x+**, бэкапы в `/var/lib/unifi/data/backup/`
-- **Ubuntu 20.04** — стандартная поддержка закончилась в мае 2025. UniFi **9.x** требует Ubuntu 22.04+ и MongoDB 8.0. На Ubuntu 20.04 ставьте UniFi **8.x** (MongoDB 7.0) или сначала обновите Ubuntu до 22.04.
+- **Ubuntu 20.04 (focal)** — стандартная поддержка закончилась в мае 2025. Потолок версий UniFi на ней такой (проверено по коду скрипта Glenn R. и по репозиториям Ubuntu/MongoDB):
+
+| Версия UniFi | Java | MongoDB | Ставить на Ubuntu 20.04? |
+|---|---|---|---|
+| 7.5.187 (последняя 7.x) | 17 | ≤ 4.4 | ✅ промежуточный шаг |
+| 8.4.62 / **8.5.6** (последняя 8.x, 09.10.2024) | 17 | ≤ 7.0 | ✅ **оптимум для focal** |
+| 9.0.118 (18.03.2026) | 17 или 21 | ≤ 8.0 | ⚠️ технически можно (`openjdk-21` и `mongodb-org 8.0` в focal есть), но официально Ubiquiti для 9.x+ требует Debian 12 / Ubuntu 22.04+ |
+| 10.1+ (актуальная **10.6.109**, 23.10.2026) | **25** | ≤ 8.0 | ❌ нельзя: `openjdk-25` в focal отсутствует |
+
+- **AVX у процессора** — обязателен для MongoDB новее 4.4. Проверьте: `grep -o -m1 avx /proc/cpuinfo`. Пусто → MongoDB останется на 4.4, а значит потолок UniFi — 8.0.x.
+
+> Дальнейший рост (UniFi 10.x) возможен только после переезда на Ubuntu 22.04/24.04 или в контейнер: ставится новая система, восстанавливается ваш `.unf`-бэкап. Планируйте это как отдельную задачу.
 
 > ⚠️ **Не вставляйте в терминал строки с комментариями** (`# ...`, особенно на русском). В `zsh` это ломает команды: `apt` начнёт искать пакеты с именами `#`, `если`, `попросит` и т.д. Комментарии — только в мануал, не в консоль.
 
@@ -119,7 +134,20 @@ mongodump --port 27117 --db unifi --out /root/unifi-mongo-$(date +%F)
 
 > Порядок важен: **сначала контроллер, потом точки.** Точки не обновляйте до контроллера.
 
-### Способ 1 — APT (если репозиторий доступен)
+### Проверка за 30 секунд: что у вас доступно без VPN
+
+```bash
+curl -sI https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb | head -1
+curl -sI https://repo.mongodb.org/apt/ubuntu/dists/focal/mongodb-org/7.0/Release | head -1
+curl -s "https://api.glennr.nl/api/network-latest?version=latest"
+curl -sI https://fw-download.ubnt.com/ | head -1
+```
+
+Что должно быть: `HTTP/2 200` (или `301`/`302`) на `dl.ui.com` и `repo.mongodb.org`, JSON вида `{"latest_release":"10.6.109"}` на `api.glennr.nl`. На `fw-download.ubnt.com` из РФ ожидаемо `403` — это нормально и **не мешает**: скрипт Glenn R. пробует этот хост только третьим по счёту (см. Способ 3).
+
+Если `dl.ui.com` отвечает `200` — **VPN не нужен ни для контроллера, ни для скрипта**.
+
+### Способ 1 — APT (в 2026 не работает, только для справки)
 
 ```bash
 sudo apt update
@@ -127,59 +155,142 @@ sudo apt install --only-upgrade unifi
 sudo systemctl status unifi
 ```
 
-Если `apt update` падает с `403` на `apt.artifacts.ui.com` — используйте Способ 2 или 3.
+❌ Путь через `apt` закрыт по двум причинам сразу: репозиторий `www.ui.com/downloads/unifi/debian` отдаёт `403` российским IP **и** Ubiquiti перестала публиковать в нём пакеты после 10.0.x (индекс `Packages` пустой). Официальный способ теперь — прямой `.deb`. Используйте Способ 2 или 3.
 
-### Способ 2 — вручную `.deb` (для РФ)
+### Способ 2 — вручную `.deb` (без VPN)
 
-1. Скачайте `.deb` через VPN (например, Outline) с `dl.ui.com` или из официального репозитория Ubiquiti. Файл может называться как угодно — не обязательно `unifi_sysvinit_all.deb`.
-2. Проверьте, что скачали именно UniFi:
+**1. Скачайте `.deb` нужной версии** — шаблон URL: `https://dl.ui.com/unifi/<версия>/unifi_sysvinit_all.deb`
 
 ```bash
-dpkg-deb -f <имя-файла>.deb Package Version
+curl -o ~/unifi_8.5.6.deb https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb
 ```
 
-3. Установите по реальному имени файла (подстановка `*` поможет с длинными именами):
+Файл большой (~150 МБ) — после скачивания обязательно проверьте его:
 
 ```bash
-sudo dpkg -i <имя-файла>.deb
+dpkg-deb -f ~/unifi_8.5.6.deb Package Version
+sha256sum ~/unifi_8.5.6.deb
+```
+
+`dpkg-deb -f` должен напечатать `unifi` и `8.5.6`. Контрольные суммы (с официального API Glenn R.):
+
+| Версия | sha256 |
+|---|---|
+| 8.5.6 | `6690a813c38f6f715c2b37fb36eadff6afa0d81a5b8d9729d4bbd63ac57fb690` |
+| 9.0.118 | `63bc502dcaa64ab06d588c777f6f5464c69b0319597801a85cdf397d976bf81b` |
+
+**2. Если `dl.ui.com` у вас всё же закрыт** — возьмите тот же файл из архива Glenn R. (сервер в Нидерландах). API отдаёт готовую ссылку и контрольные суммы:
+
+```bash
+curl -s "https://api.glennr.nl/api/network-release?version=8.5.6&server=archive"
+curl -o ~/unifi_8.5.6.deb "https://api.glennr.nl/api/download/network/8.5.6/r/ac46-debian-8.5.6-6fddd742-ccbb-46ec-a892-2b8baeedf643.deb"
+```
+
+**3. Третий вариант — скачать на зарубежном хосте и передать по `scp`** (VPN-клиент на сервере UniFi не нужен, маршруты не меняются). Так как сервер Outline у вас стоит за границей, проще всего скачать на нём:
+
+```bash
+ssh <user>@<outline-сервер> "curl -o /tmp/unifi.deb https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb"
+scp <user>@<outline-сервер>:/tmp/unifi.deb ~/unifi_8.5.6.deb
+```
+
+**4. Подготовьте зависимости до установки.** Без этого UniFi 8.x не стартует:
+
+```bash
+sudo apt update
+sudo apt install -y openjdk-17-jre-headless
+```
+
+> ⚠️ **MongoDB нельзя перепрыгнуть:** с 4.4 на 7.0 идут только последовательно — 4.4 → 5.0 → 6.0 → 7.0, и на каждом шаге нужно поднимать `featureCompatibilityVersion`. Вручную это долго и легко сломать базу. Поэтому для перехода MongoDB используйте скрипт Glenn R. (Способ 3) — он делает всю цепочку сам, а `--custom-url` позволяет подсунуть ему уже скачанный вами `.deb`.
+
+**5. Установите** (если MongoDB и Java уже в порядке, например вы идёте на 7.5.187):
+
+```bash
+sudo dpkg -i ~/unifi_8.5.6.deb
 sudo apt -f install
 sudo systemctl restart unifi
 ```
 
-> Ошибка `dpkg: cannot access archive 'unifi_sysvinit_all.deb'` означает, что файла с таким именем нет. Смотрите `ls ~/` — файл лежит под другим именем.
+> Ошибка `dpkg: cannot access archive 'unifi_sysvinit_all.deb'` означает, что файла с таким именем нет. Смотрите `ls ~/` — файл лежит под другим именем (например, `e1f2-debian-7.2.97-c3d73be1d6e14b35ae804ac666ceeade.deb`), и ставить его нужно по реальному имени или через `~/e1f2-*.deb`.
 
-### Способ 3 — Glenn R. Easy Update Script
+### Способ 3 — Glenn R. Easy Update Script (рекомендуемый)
 
-> ⚠️ **Не** `curl https://glennr.nl/s/unifi-easy-update | bash` — это веб-страница (HTML), а не скрипт. Получите `bash: line 1: !DOCTYPE` — значит, скачали HTML. Правильная команда:
+Скрипт сам проходит всю цепочку: Java, последовательное обновление MongoDB, скачивание `.deb`, перезапуск контроллера.
+
+**1. Скачать.** Не `curl https://glennr.nl/s/unifi-easy-update | bash` — это веб-страница (HTML), а не скрипт (`bash: line 1: !DOCTYPE`). Правильно:
 
 ```bash
 curl -sO https://get.glennr.nl/unifi/update/unifi-update.sh
 bash -n unifi-update.sh && echo SYNTAX_OK
-bash unifi-update.sh
 ```
 
-> **Проверяйте файл перед запуском!** Ошибка `line 391: syntax error: unexpected end of file` означает, что файл скачался **оборванным** (сеть из РФ режет соединение). Не запускайте такой файл — удалите и скачайте заново. `bash -n` проверяет синтаксис без запуска: нет `SYNTAX_OK` — файл битый.
+> **Проверяйте файл перед запуском!** Ошибка `line 391: syntax error: unexpected end of file` означает, что файл скачался **оборванным** (соединение режется на середине). Не запускайте такой файл — удалите и скачайте заново. `bash -n` проверяет синтаксис без запуска: нет `SYNTAX_OK` — файл битый. Целый файл — это ~11 800 строк и первая строка `#!/bin/bash` (`wc -l unifi-update.sh`, `head -1 unifi-update.sh`).
 
-Если `get.glennr.nl` не качает из РФ — зеркало на GitHub (тот же скрипт):
+Если `get.glennr.nl` режет загрузку (в РФ бывает стабильно на одной и той же строке) — зеркало на GitHub, оно качается целиком:
 
 ```bash
 curl -sO https://raw.githubusercontent.com/Primitiv0/unifi-installer-updater/main/unifi-update.sh
 bash -n unifi-update.sh && echo SYNTAX_OK
-bash unifi-update.sh
 ```
 
-Скрипт сам скачает `.deb`, обновит MongoDB при необходимости и перезапустит контроллер.
+**2. Обезвредить самообновление скрипта (важно для зеркала!).** Зеркало на GitHub содержит скрипт версии **9.2.6**, а актуальная — **9.9.9**. При запуске скрипт сверяет версии, **удаляет сам себя** и заново качает себя с `get.glennr.nl` — то есть снова получает оборванный файл, а рабочая копия уже удалена. Проверить и обойти:
 
-> ⚠️ Скрипт запускается **от root**: `sudo bash unifi-update.sh`. Он качает `.deb` с серверов Ubiquiti — если скачивание упадёт с `403`, включите VPN **на самом сервере** (VPN на рабочей станции серверу не поможет) или используйте Способ 2: скачайте `.deb` через VPN на рабочей станции и залейте `scp` на сервер.
+```bash
+curl -s "https://api.glennr.nl/api/latest-script-version?script=unifi-update"
+sed -n '5p' unifi-update.sh
+sed -i '5s/9\.2\.6/9\.9\.9/' unifi-update.sh
+sed -n '5p' unifi-update.sh
+bash -n unifi-update.sh && echo SYNTAX_OK
+```
 
-> ⚠️ **MongoDB и версии:** UniFi 7.x → MongoDB 4.4, 8.x → MongoDB 7.0, 9.x → MongoDB 8.0. Не прыгайте с 7.x сразу на 9.x без промежуточного 8.x — MongoDB не умеет скакать через версии. Если после обновления контроллер не стартует — проверьте `mongosh --version` и `sudo journalctl -u unifi -f`.
+Подмена номера версии в шапке (строка 5) отключает самообновление. Расплата: скрипт 9.2.6 ничего не знает про UniFi 10.x (Java 25, MongoDB 8.0) и в меню предлагает максимум **8.4.62** — для Ubuntu 20.04 это как раз нужный потолок.
+
+**3. Запустить** (обязательно от root):
+
+```bash
+sudo bash unifi-update.sh
+```
+
+Скрипт спросит стадию релиза (выбирайте `Stable`) и покажет меню версий — для 7.2.97 это 7.3.83, 7.4.162, 7.5.187, 8.0.28 … 8.4.62. Отвечайте по ходу, команды с комментариями `#` не вставляйте.
+
+Рекомендуемая лестница для Ubuntu 20.04 (два запуска, после каждого — проверка Web UI):
+
+```bash
+sudo bash unifi-update.sh
+sudo bash unifi-update.sh --custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb
+```
+
+первый запуск → `7.5.187`, второй → последняя 8.x. Ключ `--custom-url` жёстко фиксирует версию и источник файла — полезно, когда нужной версии в меню нет или основной CDN закрыт (можно подсунуть ссылку из архива Glenn R. или локальный HTTP-сервер, см. ниже).
+
+**4. Почему VPN обычно не нужен.** Скрипт перебирает источники `.deb` в таком порядке:
+
+1. `https://dl.ui.com/unifi/<версия>/unifi_sysvinit_all.deb` ← пробуется **первым**
+2. `https://dl.ui.com/unifi/<версия-release>/unifi_sysvinit_all.deb`
+3. `https://fw-download.ubnt.com/...` ← из РФ `403`, но к этому шагу дело обычно не доходит
+4. `https://api.glennr.nl/api/download/network/...` ← архив Glenn R.
+
+Заблокированный Ubiquiti-хост — только третий в списке, поэтому при живом `dl.ui.com` обновление проходит без VPN.
+
+**5. Если `.deb` уже скачан вручную** (Способ 2) и все внешние источники закрыты — раздайте его локально и подсуньте скрипту:
+
+```bash
+cd ~ && python3 -m http.server 8000 &
+sudo bash unifi-update.sh --custom-url http://127.0.0.1:8000/unifi_8.5.6.deb
+```
+
+> ⚠️ Скрипт и `apt` работают на самом сервере: VPN, включённый только на рабочей станции, серверу не помогает. Если без VPN никак — ставьте клиент на сервер (Outline) либо качайте файл на зарубежном хосте и передавайте `scp` (Способ 2, п. 3).
+
+> ⚠️ **MongoDB и версии:** UniFi 7.5–8.0 → MongoDB ≤ 4.4, 8.1+ → ≤ 7.0, 9.x → ≤ 8.0, 10.x → ≤ 8.0 + Java 25. Не прыгайте с 7.x сразу на 9.x/10.x: MongoDB не умеет скакать через мажорные версии, а для 10.x на Ubuntu 20.04 нет Java 25. Если после обновления контроллер не стартует — проверьте `mongosh --version` и `sudo journalctl -u unifi -f`.
 
 ### Docker (если контроллер в контейнере)
 
+Docker Hub из РФ доступен без VPN, а образ уже содержит приложение — обращаться к `dl.ui.com` не нужно:
+
 ```bash
-docker pull jacobalberts/unifi:latest
+docker pull lscr.io/linuxserver/unifi-network-application:latest
 docker compose up -d
 ```
+
+Классический образ Ubiquiti-сообщества — `jacobalberty/unifi` (именно `alberty`, частая опечатка). Конфигурация переносится восстановлением `.unf`-бэкапа в свежий контейнер; внешний MongoDB нужен отдельным контейнером (`mongo:7.0`, версия пинится явно, не `latest`).
 
 ---
 
@@ -190,7 +301,14 @@ docker compose up -d
 ### Подготовка
 
 1. Выключите автообновления: `Settings → System → Updates`.
-2. Скачайте прошивку `.bin` для вашей модели AP через VPN с `dl.ui.com/unifi/firmware/` или со страницы загрузки Ubiquiti.
+2. Скачайте прошивку `.bin` для вашей модели AP. Кнопка **Update** в Web UI ходит на `fw-download.ubnt.com` → из РФ `403`, поэтому прошивку берём напрямую с `dl.ui.com` (этот CDN из РФ обычно открывается, VPN не нужен):
+
+```bash
+curl -sI https://dl.ui.com/unifi/firmware/U7PG2/6.6.77/ | head -1
+curl -o ~/U7PG2.bin https://dl.ui.com/unifi/firmware/U7PG2/<версия>/<имя-файла>.bin
+```
+
+Точный путь и имя файла для вашей модели берите на `community.ui.com/releases` (правый клик по ссылке загрузки → «Copy link address») или на странице загрузок Ubiquiti. Встречаются два шаблона: `.../firmware/<МОДЕЛЬ>/<версия>/<ПЛАТФОРМА>.<версия>.bin` и `.../firmware/<МОДЕЛЬ>/v<версия>/<МОДЕЛЬ>.<платформа>.v<версия>.<сборка>.bin`.
 
 ![Страница загрузки прошивки UniFi (dl.ui.com)](../../assets/network/unifi/05-firmware-download-page.jpg)
 
@@ -207,25 +325,49 @@ docker compose up -d
 3. Дождитесь `Upgrading…` → `Connected`. Проверьте Wi-Fi.
 4. Повторите для следующей AP.
 
+> Из РФ кнопка **Update** чаще всего упирается в `403` на `fw-download.ubnt.com` — тогда берите Способ 1б или 2/3.
+
+### Способ 1б — `upgrade <URL>` по SSH, прямо с `dl.ui.com`
+
+Если точка имеет выход в интернет и `dl.ui.com` не заблокирован, локальный HTTP-сервер не нужен — точка сама скачает прошивку по прямой ссылке:
+
+```bash
+ssh <user>@<IP-точки>
+upgrade https://dl.ui.com/unifi/firmware/U7PG2/<версия>/<имя-файла>.bin
+```
+
+Это официальный способ Ubiquiti («UniFi — Advanced Updating Techniques»). Обновляйте так по одной точке, дожидаясь `Connected`.
+
 ### Способ 2 — Custom Upgrade через локальный URL (для РФ)
 
 1. Положите `.bin` на локальный HTTP-сервер или в кэш контроллера: `/usr/lib/unifi/dl/firmware/`.
 2. `Devices` → одна AP → `Settings` (шестерёнка) → **Manual Firmware Update** → **Custom Upgrade**.
-3. Укажите URL: `http://<IP-контроллера>:8080/<имя-файла>.bin`.
+3. Укажите URL: `http://<IP-контроллера>:8081/<имя-файла>.bin`.
 4. Дождитесь перезагрузки и `Connected`, затем следующая AP.
+
+> ⚠️ **Не используйте порт `8080`** — он занят самим контроллером (порт информирования устройств), как и `8443`, `8444`, `8843`, `8880`. Берите `8081`/`9090` и подобные. Пример локальной раздачи: `cd ~/firmware && python3 -m http.server 8081`.
 
 ### Способ 3 — SSH/SCP офлайн (самый надёжный в РФ)
 
+Шаг 1 — проверить место на точке (в `/tmp` должно влезать ~30 МБ):
+
 ```bash
-# 1. Проверить место на точке
 ssh <user>@<IP-точки> "df -h /tmp"
+```
 
-# 2. Залить прошивку
+Шаг 2 — залить прошивку:
+
+```bash
 scp <файл>.bin <user>@<IP-точки>:/tmp/fwupdate.bin
+```
 
-# 3. Запустить обновление
+Шаг 3 — запустить обновление:
+
+```bash
 ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 ```
+
+> Команды копируйте **по одной и без комментариев** (`# …`): в `zsh` строка-комментарий ломает следующую команду.
 
 ![SSH-обновление точки: upgrade <URL> → Scheduling firmware upgrade](../../assets/network/unifi/04-ssh-upgrade-terminal.jpg)
 
@@ -237,16 +379,26 @@ ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 
 **После каждого шага проверяйте:**
 
-- Контроллер открывается: `https://<IP>:8443`.
+```bash
+dpkg -l unifi | tail -1
+dpkg -l mongodb-org-server | tail -1
+systemctl status unifi --no-pager | head -5
+sudo journalctl -u unifi -n 50 --no-pager
+```
+
+- Контроллер открывается: `https://<IP>:8443` (первый запуск после апгрейда идёт дольше обычного — дождитесь полной загрузки, не перезапускайте).
 - Все AP в статусе `Connected`.
 - Клиенты подключаются к Wi-Fi.
 - Версии совпадают с целевыми.
 
 **Откат контроллера:**
 
-1. Остановите контроллер: `sudo systemctl stop unifi`.
-2. Восстановите `.unf` через `Settings → System → Backups → Restore` (или `Upload & Restore`).
-3. Либо верните снапшот VM / восстановите MongoDB из дампа.
+1. Верните прежний пакет (если старый `.deb` сохранён): `sudo dpkg -i ~/e1f2-debian-7.2.97-*.deb`.
+2. Остановите контроллер: `sudo systemctl stop unifi`.
+3. Восстановите `.unf` через `Settings → System → Backups → Restore` (или `Upload & Restore`).
+4. Либо верните снапшот VM / восстановите MongoDB из дампа.
+
+> ⚠️ Откат версии UniFi **не** откатывает схему базы данных: после запуска 8.x вернуться на 7.x «просто так» не получится — только восстановлением из `.unf`/дампа. Поэтому бэкап делается до первого шага, а лестница версий проходится по одному шагу с проверкой.
 
 **Откат точки:** залейте предыдущую `.bin` способом 3 из раздела 4.
 
@@ -256,7 +408,12 @@ ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 
 | Симптом | Причина | Решение |
 |---|---|---|
-| `apt update` → `403` на `ui.com/downloads/unifi/debian` | RU IP заблокирован Ubiquiti | Способ 2/3 из раздела 3 (VPN + `.deb` / Glenn R.) |
+| `apt update` → `403` на `ui.com/downloads/unifi/debian` | RU IP заблокирован Ubiquiti **и** репозиторий больше не обновляется (пакеты не публикуются после 10.0.x) | `apt`-путь заброшен для всех: ставьте `.deb` напрямую (раздел 3, Способ 2/3) |
+| `apt install --only-upgrade unifi` → `Unable to locate package` / не находит новую версию | В репозитории нет индекса `Packages` | То же: прямой `.deb` с `dl.ui.com` |
+| Скрипт Glenn R. удалил сам себя и снова скачал битый файл | Локальная версия скрипта ниже актуальной → самообновление с `get.glennr.nl` | `sed -i '5s/9\.2\.6/9\.9\.9/' unifi-update.sh`, затем `bash -n` и запуск (раздел 3, Способ 3, п. 2) |
+| Скрипт предлагает 10.x, а UniFi потом не стартует | UniFi 10.1+ требует Java 25 — на Ubuntu 20.04 его нет | Фиксируйте версию: `--custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb` |
+| Скачивание `.deb` внутри скрипта → `403` на `fw-download.ubnt.com` | Скрипт дошёл до третьего источника из четырёх; первые два — `dl.ui.com` | Проверьте `curl -sI https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb`; если `403` — ссылка из архива `api.glennr.nl` (Способ 2, п. 2) |
+| MongoDB 7.0/8.0 не устанавливается или падает при старте | CPU без AVX (или виртуалка без проброса AVX) | `grep -o -m1 avx /proc/cpuinfo`; пусто → оставайтесь на MongoDB 4.4 и UniFi ≤ 8.0.x |
 | `EXPKEYSIG ... MongoDB 4.4 Release Signing Key` | Ключ репозитория MongoDB 4.4 истёк, репо отключено | Не чинить 4.4 — переходите на MongoDB 7.0/8.0 через Glenn R. скрипт |
 | `No such file or directory` на `/var/lib/unifi/data/backup/` | У вас UniFi 7.x, путь `/usr/lib/unifi/data/backup/` | Определите путь через `systemctl cat unifi \| grep dbpath` |
 | `mongodump` → `connection refused` | MongoDB контроллера на порту 27117, или `unifi` остановлен | `mongodump --port 27117 ...`, не останавливать `unifi` перед дампом |
@@ -269,7 +426,8 @@ ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 | После обновления нет доступа | Вход только через UI.com SSO | Зайдите локальным Super Admin |
 | Контроллер не стартует после обновления | Несовпадение MongoDB | Обновите MongoDB до 7.0/8.0, смотрите `journalctl -u unifi` |
 | Все AP перезагрузились разом | Включены автообновления | Выключите в `Settings → System → Updates` перед работой |
-| Точка не обновляется по Custom Upgrade | Неверный URL / файл не в кэше | Проверьте `/usr/lib/unifi/dl/firmware/` и доступность HTTP |
+| Точка не обновляется по Custom Upgrade | Неверный URL / файл не в кэше / порт занят контроллером | Проверьте `/usr/lib/unifi/dl/firmware/`, доступность HTTP и что порт не `8080`/`8443`/`8843`/`8880` — они у контроллера |
+| Прошивка по `upgrade <URL>` не качается | Точка ходит на `fw-download.ubnt.com` (заблокирован) или URL неверный | Берите прямую ссылку `dl.ui.com/unifi/firmware/...` с `community.ui.com/releases` (раздел 4, Способ 1б) |
 
 ---
 

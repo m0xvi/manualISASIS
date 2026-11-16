@@ -17,7 +17,7 @@
   <rect x="220" y="60" width="150" height="90" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="2"/>
   <text x="295" y="85" text-anchor="middle" font-size="13" font-weight="bold" fill="#14532d">2. Контроллер</text>
   <text x="295" y="105" text-anchor="middle" font-size="11" fill="#334155">Ubuntu Server</text>
-  <text x="295" y="122" text-anchor="middle" font-size="11" fill="#334155">apt / .deb</text>
+  <text x="295" y="122" text-anchor="middle" font-size="11" fill="#334155">прямой .deb</text>
   <text x="295" y="139" text-anchor="middle" font-size="11" fill="#334155">Glenn R. скрипт</text>
 
   <!-- Arrow 2 -->
@@ -40,8 +40,9 @@
 
   <!-- Warning box -->
   <rect x="30" y="180" width="660" height="120" rx="10" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
-  <text x="360" y="205" text-anchor="middle" font-size="13" font-weight="bold" fill="#991b1b">⚠ Для РФ: серверы Ubiquiti блокируют RU IP (403)</text>
-  <text x="360" y="228" text-anchor="middle" font-size="12" fill="#7f1d1d">fw-download.ubnt.com • fw-update.ubnt.com • apt.artifacts.ui.com</text>
-  <text x="360" y="250" text-anchor="middle" font-size="12" fill="#7f1d1d">Решение: VPN для скачивания .deb/.bin + офлайн-обновление точек (Custom Upgrade / SSH)</text>
-  <text x="360" y="275" text-anchor="middle" font-size="12" font-weight="bold" fill="#991b1b">Обязательно: локальный Super Admin + SSH-пароли ДО обновления!</text>
+  <text x="360" y="203" text-anchor="middle" font-size="13" font-weight="bold" fill="#991b1b">&#9888; Для РФ: часть серверов Ubiquiti отдаёт 403, но обновление возможно без VPN</text>
+  <text x="360" y="224" text-anchor="middle" font-size="11" fill="#7f1d1d">Закрыты: fw-download.ubnt.com • fw-update.ubnt.com • www.ui.com/downloads (apt-репо больше не обновляется)</text>
+  <text x="360" y="243" text-anchor="middle" font-size="11" fill="#14532d">Открыты: dl.ui.com (.deb и прошивки) • repo.mongodb.org • api.glennr.nl • github.com</text>
+  <text x="360" y="264" text-anchor="middle" font-size="11" fill="#7f1d1d">Точки: кнопка Update не работает — берите upgrade &lt;URL&gt; с dl.ui.com, Custom Upgrade или SSH/SCP</text>
+  <text x="360" y="286" text-anchor="middle" font-size="12" font-weight="bold" fill="#991b1b">Обязательно: локальный Super Admin + SSH-пароли ДО обновления!</text>
 </svg>
