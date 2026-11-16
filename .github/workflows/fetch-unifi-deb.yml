@@ -1,0 +1,65 @@
+name: fetch-unifi-deb
+
+# Зачем: сервер в РФ не может скачать .deb UniFi (dl.ui.com отдаёт 451, fw-download.ubnt.com — 403).
+# Раннеры GitHub находятся вне РФ, скачивают пакет и прикрепляют его к релизу этого репозитория.
+# Релиз приватного репозитория виден только владельцам репозитория.
+on:
+  push:
+    paths:
+      - '.github/workflows/fetch-unifi-deb.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    env:
+      UNIFI_VERSION: "8.5.6"
+      EXPECTED_SHA256: "6690a813c38f6f715c2b37fb36eadff6afa0d81a5b8d9729d4bbd63ac57fb690"
+    steps:
+      - name: Download UniFi Network Application deb
+        run: |
+          set -uo pipefail
+          urls=(
+            "https://dl.ui.com/unifi/${UNIFI_VERSION}/unifi_sysvinit_all.deb"
+            "https://api.glennr.nl/api/download/network/${UNIFI_VERSION}/r/ac46-debian-8.5.6-6fddd742-ccbb-46ec-a892-2b8baeedf643.deb"
+          )
+          dyn="$(curl -fsS "https://api.glennr.nl/api/network-release?version=${UNIFI_VERSION}" | jq -r '.download_link // empty')" || dyn=""
+          if [[ -n "${dyn}" ]]; then urls+=("${dyn}"); fi
+          ok=""
+          for u in "${urls[@]}"; do
+            echo "::group::trying ${u}"
+            rm -f unifi.deb
+            if curl -fL --retry 4 --retry-all-errors --connect-timeout 20 -o unifi.deb "${u}"; then
+              actual="$(sha256sum unifi.deb | cut -d' ' -f1)"
+              echo "sha256: ${actual}"
+              if [[ "${actual}" == "${EXPECTED_SHA256}" ]]; then ok="${u}"; fi
+            else
+              echo "download failed"
+            fi
+            echo "::endgroup::"
+            [[ -n "${ok}" ]] && break
+          done
+          if [[ -z "${ok}" ]]; then echo "::error::all sources failed or checksum mismatch"; exit 1; fi
+          echo "source: ${ok}"
+          ls -l unifi.deb
+          mv unifi.deb "unifi_${UNIFI_VERSION}.deb"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          tag="unifi-${UNIFI_VERSION}"
+          gh release create "${tag}" "unifi_${UNIFI_VERSION}.deb" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "UniFi Network Application ${UNIFI_VERSION} (deb mirror)" \
+            --notes "Зеркало официального пакета Ubiquiti для офлайн-установки в сетях с гео-блокировкой. sha256: ${EXPECTED_SHA256}" \
+            || gh release upload "${tag}" "unifi_${UNIFI_VERSION}.deb" --repo "${GITHUB_REPOSITORY}" --clobber
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: unifi-8.5.6-deb
+          path: unifi_${{ env.UNIFI_VERSION }}.deb
+          retention-days: 90
