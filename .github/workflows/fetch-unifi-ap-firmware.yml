@@ -1,64 +1,183 @@
 name: fetch-unifi-ap-firmware
 
-# Зачем: из РФ кнопки Update в Web UI не работают (fw-download.ubnt.com / fw-update.ui.com отдают 403/451).
-# Раннеры GitHub (IP вне РФ) скачивают прошивки AP из release-канала и прикрепляют их к релизу репозитория.
-# Версии подобраны совместимыми с UniFi Network Application 8.5.6: линия 6.x для Wi-Fi 6 (U6-*), линия 4.x для UAP-AC (wave 1).
+# Зачем: из РФ кнопки Update в Web UI не работают (fw-download.ubnt.com / fw-update.ui.com отдают 403/451),
+# а прошивку для Custom Upgrade или SSH `upgrade <url>` нужно откуда-то взять. Раннеры GitHub (IP вне РФ)
+# скачивают `.bin` и прикрепляют их к релизу репозитория — сервер забирает их `curl -fL` без VPN.
+#
+# Важно про API Ubiquiti: он оперирует НЕПРОЗРАЧНЫМИ кодами в поле `platform` (U7PG2, UAL6, USL16P, UGW3…),
+# которые не совпадают с названиями моделей из Web UI (U6-Lite, UAP-AC-LR…). Для устройств UniFi поле
+# `product` у всех одинаковое — `unifi-firmware`, — а фильтр `model=` API отвергает (HTTP 400).
+# Поэтому точный код платформы берётся либо из контроллера (`model` в stat/device), либо из таблицы
+# references/unifi-firmware-platform-codes.md, которую собирает job `catalog` ниже.
+#
+# Запуск: Actions → fetch-unifi-ap-firmware → Run workflow → `platforms` = коды через запятую,
+# при необходимости с ограничением ветки: `UAL6:6`, `U7PG2:6`, `USL16P:6`.
 on:
   push:
     paths:
       - '.github/workflows/fetch-unifi-ap-firmware.yml'
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Коды платформ через запятую (можно с :MAJOR), например: UAL6,U7PG2:6,USL16P'
+        required: true
+        default: 'UAL6,U7PG2'
 
 permissions:
   contents: write
 
 jobs:
-  firmware:
+  catalog:
+    name: Build platform-code catalog
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: U6-ENT
-            major: "6"
-          - platform: U6-IW
-            major: "6"
-          - platform: U6-MESH
-            major: "6"
-          - platform: UAP-AC-HD
-            major: "4"
-          - platform: UAP-AC-IW
-            major: "4"
-          - platform: UAP-AC-LR
-            major: "4"
-          - platform: UAP-AC-LITE
-            major: "4"
+    timeout-minutes: 20
     steps:
-      - name: Fetch firmware metadata and binary
-        id: fw
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch release-channel catalog
         run: |
           set -euo pipefail
-          api="https://fw-update.ui.com/api/firmware-latest?filter=eq~~platform~~${{ matrix.platform }}&filter=eq~~channel~~release&filter=eq~~version_major~~${{ matrix.major }}"
-          curl -fsS "${api}" -o meta.json
-          echo "--- metadata for ${{ matrix.platform }} ---"
-          jq -c '._embedded.firmware[0] | {version, sha256_checksum, href: ._links.data.href}' meta.json
-          href="$(jq -r '._embedded.firmware[0]._links.data.href // empty' meta.json)"
-          ver="$(jq -r '._embedded.firmware[0].version // empty' meta.json)"
-          sha="$(jq -r '._embedded.firmware[0].sha256_checksum // empty' meta.json)"
-          if [[ -z "${href}" ]]; then echo "::error::no release firmware for ${{ matrix.platform }} major ${{ matrix.major }}"; exit 1; fi
-          if [[ -z "${ver}" ]]; then ver="$(basename "${href}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; fi
-          curl -fL --retry 4 --retry-all-errors --connect-timeout 20 -o fw.bin "${href}"
-          if [[ -n "${sha}" ]]; then echo "${sha}  fw.bin" | sha256sum -c -; fi
-          ls -l fw.bin
-          cp fw.bin "${{ matrix.platform }}-${ver}.bin"
-          echo "version=${ver}" >> "${GITHUB_OUTPUT}"
+          curl -fsS --retry 3 --retry-all-errors --connect-timeout 20 \
+            "https://fw-update.ui.com/api/firmware-latest?filter=eq~~channel~~release" -o catalog.json
+          echo "entries: $(jq -r '._embedded.firmware | length' catalog.json)"
+          ls -lh catalog.json
+
+      - name: Render markdown table
+        run: |
+          set -euo pipefail
+          mkdir -p references
+          {
+            echo "# Коды платформ прошивок Ubiquiti (release-канал)"
+            echo
+            echo "Автогенерация: workflow \`fetch-unifi-ap-firmware\` (job \`catalog\`), источник —"
+            echo "\`https://fw-update.ui.com/api/firmware-latest?filter=eq~~channel~~release\`."
+            echo "Дата сборки: $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+            echo
+            echo "Поле \`platform\` — это то, что API Ubiquiti понимает под моделью; названия из Web UI"
+            echo "(U6-Lite, UAP-AC-LR…) в API не ищутся. Для устройств UniFi \`product\` = \`unifi-firmware\`."
+            echo "Сопоставление «название в Web UI → код» берите из контроллера:"
+            echo "\`db.device.find({}, {name:1, model:1, type:1, version:1, ip:1})\` в базе \`ace\`"
+            echo "или Devices → устройство → Information → Model/Type."
+            echo
+            echo "| platform | product | latest version | size, bytes | sha256 |"
+            echo "| --- | --- | --- | --- | --- |"
+            jq -r '._embedded.firmware
+                   | sort_by(.platform, .product, (.version_major|tonumber? // 0), (.version_minor|tonumber? // 0), (.version_patch|tonumber? // 0))
+                   | group_by(.platform + " " + (.product // ""))
+                   | map(last)
+                   | .[]
+                   | "| \(.platform) | \(.product // "-") | \(.version) | \(.file_size) | `\(.sha256_checksum // "-")` |"' catalog.json
+          } > references/unifi-firmware-platform-codes.md
+          rows=$(( $(grep -c '^| ' references/unifi-firmware-platform-codes.md) - 2 ))
+          echo "platform rows: ${rows}"
+
+      - name: Commit catalog if changed
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add references/unifi-firmware-platform-codes.md
+          if git diff --cached --quiet; then
+            echo "каталог не изменился — коммит не нужен"
+          else
+            git commit -m "chore: refresh UniFi/Ubiquiti firmware platform-code catalog"
+            git fetch origin "${GITHUB_REF_NAME}" || true
+            git rebase "origin/${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+  firmware:
+    name: Mirror requested firmware
+    if: github.event_name == 'workflow_dispatch'
+    needs: catalog
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch release-channel catalog
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 3 --retry-all-errors --connect-timeout 20 \
+            "https://fw-update.ui.com/api/firmware-latest?filter=eq~~channel~~release" -o catalog.json
+          echo "entries: $(jq -r '._embedded.firmware | length' catalog.json)"
+
+      - name: Resolve, download, verify
+        id: fw
+        env:
+          PLATFORMS: ${{ github.event.inputs.platforms }}
+        run: |
+          set -uo pipefail
+          : > resolved.txt
+          IFS=', ' read -r -a items <<< "${PLATFORMS}"
+          for item in "${items[@]}"; do
+            [[ -z "${item}" ]] && continue
+            key="${item%%:*}"; major="${item##*:}"
+            [[ "${major}" == "${item}" ]] && major=""
+            lkey="$(printf '%s' "${key}" | tr '[:upper:]' '[:lower:]')"
+            jq -c --arg k "${lkey}" --arg m "${major}" '
+              [ ._embedded.firmware[]
+                | select( ((.platform // "") | ascii_downcase | contains($k))
+                       or ((.product   // "") | ascii_downcase | contains($k)) ) ]
+              | map(select($m == "" or ((.version_major | tostring) == $m)))
+              | sort_by((.version_major | tonumber? // 0), (.version_minor | tonumber? // 0), (.version_patch | tonumber? // 0))
+              | reverse
+            ' catalog.json > cand.json
+            echo "--- candidates for ${item} ---"
+            jq -c '.[] | {platform, product, version, file_size}' cand.json | head -20
+            href="$(jq -r '.[0]._links.data.href // empty' cand.json)"
+            if [[ -z "${href}" ]]; then
+              echo "::warning::нет совпадений для '${item}' — смотрите таблицу references/unifi-firmware-platform-codes.md"
+              continue
+            fi
+            plat="$(jq -r '.[0].platform' cand.json)"
+            ver="$(jq -r '.[0].version // ""' cand.json)"
+            sha="$(jq -r '.[0].sha256_checksum // empty' cand.json)"
+            size="$(jq -r '.[0].file_size // ""' cand.json)"
+            vernum="${ver#v}"; vernum="${vernum%%+*}"
+            name="${plat}-${vernum}.bin"
+            echo "downloading ${plat} ${ver} (${size} bytes) -> ${name}"
+            if ! curl -fL --retry 4 --retry-all-errors --connect-timeout 20 -o "${name}" "${href}"; then
+              echo "::warning::не удалось скачать ${href}"; rm -f "${name}"; continue
+            fi
+            if [[ -n "${sha}" ]]; then
+              if ! echo "${sha}  ${name}" | sha256sum -c -; then
+                echo "::error::sha256 не совпал для ${name}"; rm -f "${name}"; continue
+              fi
+            fi
+            ls -l "${name}"
+            printf '%s|%s|%s|%s|%s\n' "${name}" "${plat}" "${ver}" "${size}" "${sha}" >> resolved.txt
+          done
+          if [[ -s resolved.txt ]]; then
+            sort -u -t'|' -k1,1 resolved.txt > resolved.uniq && mv resolved.uniq resolved.txt
+          fi
+          if [[ ! -s resolved.txt ]]; then echo "::error::ни один код платформы не разрешился"; exit 1; fi
+          {
+            echo '### Зеркало прошивок'
+            echo ''
+            echo '| файл | platform | version | размер | sha256 |'
+            echo '| --- | --- | --- | --- | --- |'
+            awk -F'|' '{printf "| `%s` | %s | %s | %s B | `%s` |\n", $1, $2, $3, $4, $5}' resolved.txt
+            echo ''
+            echo 'С сервера (без VPN):'
+            echo ''
+            echo '```bash'
+            while IFS='|' read -r name _ _ _ _; do
+              echo "curl -fL -o ${name} https://github.com/${GITHUB_REPOSITORY}/releases/download/unifi-ap-firmware/${name}"
+            done < resolved.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Publish to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh release create unifi-ap-firmware --repo "${GITHUB_REPOSITORY}" \
-            --title "UniFi AP firmware mirror (release channel)" \
-            --notes "Прошивки AP из release-канала fw-update.ui.com, скачаны раннерами GitHub и проверены по sha256. Линии: 6.x для U6-*, 4.x для UAP-AC-* (совместимы с Network Application 8.5.6)." \
-            || true
+            --title "UniFi firmware mirror (release channel)" \
+            --notes "Прошивки устройств Ubiquiti из release-канала \`fw-update.ui.com\`: скачаны раннерами GitHub и проверены по sha256. Забирайте с сервера \`curl -fL -o <файл> https://github.com/${GITHUB_REPOSITORY}/releases/download/unifi-ap-firmware/<файл>\` и подставляйте URL в Custom Upgrade или SSH \`upgrade <url>\`." || true
           sleep 2
-          gh release upload unifi-ap-firmware "${{ matrix.platform }}-${{ steps.fw.outputs.version }}.bin" --repo "${GITHUB_REPOSITORY}" --clobber
+          while IFS='|' read -r name _plat _ver _size _sha; do
+            gh release upload unifi-ap-firmware "${name}" --repo "${GITHUB_REPOSITORY}" --clobber
+          done < resolved.txt
+          echo "published:"
+          gh release view unifi-ap-firmware --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name'
