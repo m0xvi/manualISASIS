@@ -154,6 +154,17 @@ sudo systemctl restart unifi
 
 ```bash
 curl -sO https://get.glennr.nl/unifi/update/unifi-update.sh
+bash -n unifi-update.sh && echo SYNTAX_OK
+bash unifi-update.sh
+```
+
+> **Проверяйте файл перед запуском!** Ошибка `line 391: syntax error: unexpected end of file` означает, что файл скачался **оборванным** (сеть из РФ режет соединение). Не запускайте такой файл — удалите и скачайте заново. `bash -n` проверяет синтаксис без запуска: нет `SYNTAX_OK` — файл битый.
+
+Если `get.glennr.nl` не качает из РФ — зеркало на GitHub (тот же скрипт):
+
+```bash
+curl -sO https://raw.githubusercontent.com/Primitiv0/unifi-installer-updater/main/unifi-update.sh
+bash -n unifi-update.sh && echo SYNTAX_OK
 bash unifi-update.sh
 ```
 
@@ -249,6 +260,7 @@ ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 | `mongodump` → `connection refused` | MongoDB контроллера на порту 27117, или `unifi` остановлен | `mongodump --port 27117 ...`, не останавливать `unifi` перед дампом |
 | `dpkg: cannot access archive 'unifi_sysvinit_all.deb'` | Файл называется иначе | `ls ~/`, `dpkg-deb -f <файл> Package Version`, установка по `*` |
 | `bash: line 1: !DOCTYPE` от Glenn R. | Скачали HTML-страницу `glennr.nl/s/...`, а не скрипт | `curl -sO https://get.glennr.nl/unifi/update/unifi-update.sh && bash unifi-update.sh` |
+| `line 391: syntax error: unexpected end of file` | Файл `unifi-update.sh` скачался оборванным | Удалить файл, скачать заново; проверить `bash -n unifi-update.sh`; если `get.glennr.nl` режет — зеркало GitHub или VPN |
 | `apt` ищет пакеты `#`, `если`, `попросит` | Вставлена строка с комментарием (особенно в `zsh`) | Не вставляйте комментарии в терминал; `apt -f install` — отдельной строкой без `#` |
 | `zsh: command not found: #` | Вставлена строка-комментарий `# ...` | Комментарии — только в мануал, в консоль — только команды |
 | Кнопка Update на AP не работает | `fw-download.ubnt.com` → `403` | Custom Upgrade или SSH/SCP (раздел 4) |
