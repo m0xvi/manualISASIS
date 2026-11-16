@@ -323,6 +323,9 @@ sudo bash unifi-update.sh --custom-url "https://api.glennr.nl/api/download/netwo
 | Всё про Cloud / email / 2FA / remote access | `N` — облако из РФ недоступно |
 | `Would you like to provide another download link? (Y/n)` | Появится, если ссылка не скачалась: `Y` и вставить архивную ссылку (или `file:///...`, см. п. 5) |
 | `Do you want to keep the script on your system after completion? (Y/n)` | `Y` или `Enter`. При `N` скрипт **удалит собственный файл** по завершении — и следующий запуск начнётся с `bash: unifi-update.sh: No such file or directory` |
+| `Do you want to proceed with creating a backup? (Y/n)` | `Y` — скрипт сам снимет `.unf` в `…/data/backup/glennr-unifi-backups/` перед апгрейдом |
+| `What is your UniFi Network Application Username?` / пароль | Локальный Super Admin (тот самый, из чек-листа); используется только для входа в API ради бэкапа, не сохраняется |
+| `What would you like to do with the script login events?` | `3` (Skip) — меньше движений по базе; любой вариант на обновление не влияет |
 
 Закладывайте 10–40 минут: цепочка MongoDB плюс скачивание ~150 МБ. Терминал не закрывать. Выйти из меню без изменений — пункт `7` (`Cancel Script`).
 
@@ -443,6 +446,15 @@ systemctl status unifi --no-pager | head -5
 sudo journalctl -u unifi -n 50 --no-pager
 ```
 
+Ожидаемые значения после апгрейда на 8.x (реальный прогон 16.11.2026, Ubuntu 20.04, было 7.2.97):
+
+- `ii  unifi  8.5.6-…` — версия из целевой;
+- `active (running)` у `unifi.service`; первый запуск после миграции долгий;
+- MongoDB может остаться **4.4** — это норма: UniFi 8.1–8.5 поддерживают до 7.0, но не требуют её, скрипт цепочку не гонит, если минимум (3.6) выполнен;
+- Java: `ii openjdk-17-jre-headless` (или `temurin-17-jre`); старые 8/11 скрипт предлагает снести отдельным вопросом;
+- `dbpath` в `systemctl cat unifi` на 8.x может указывать на `/var/lib/unifi/data/db` — используйте этот путь для новых бэкапов;
+- в хвосте журнала нет `ERROR`/`FATAL`.
+
 - Контроллер открывается: `https://<IP>:8443` (первый запуск после апгрейда идёт дольше обычного — дождитесь полной загрузки, не перезапускайте).
 - Все AP в статусе `Connected`.
 - Клиенты подключаются к Wi-Fi.
@@ -469,6 +481,7 @@ sudo journalctl -u unifi -n 50 --no-pager
 | `apt install --only-upgrade unifi` → `Unable to locate package` / не находит новую версию | В репозитории нет индекса `Packages` | То же: прямой `.deb` с `dl.ui.com` |
 | Скрипт Glenn R. удалил сам себя и снова скачал битый файл | Локальная версия скрипта ниже актуальной → самообновление с `get.glennr.nl` | `sed -i '5s/9\.2\.6/9\.9\.9/' unifi-update.sh`, затем `bash -n` и запуск (раздел 3, Способ 3, п. 2) |
 | `bash: unifi-update.sh: No such file or directory` при новом запуске | Второе самоудаление: в финале прошлого запуска на `keep the script on your system after completion?` ответили `N` | Не ошибка. Заново: `curl -sO https://raw.githubusercontent.com/Primitiv0/unifi-installer-updater/main/unifi-update.sh`, патч версии, `bash -n`, запуск; в финале отвечать `Y` |
+| `Something went wrong during running apt-get update!` внутри скрипта Glenn R. (повторяется 3 раза) | `apt update` спотыкается о мёртвый репозиторий UniFi (403/451 из РФ) и репозиторий MongoDB 4.4 с истёкшим ключом; скрипт продолжает работу | Не фатально, если целевые пакеты ставятся из живых репо: проверьте `dpkg -l openjdk-17-jre-headless`. После апгрейда уберите мёртвые списки из `/etc/apt/sources.list.d/` в отдельную папку и сделайте `sudo apt update` |
 | Скрипт «висит» сразу после баннера `Thank you for using my Easy Update Script :-)`, курсор мигает | Молчаливые шаги старта: `systemctl stop unattended-upgrades` ждёт застрявшую службу (часто после прерванных запусков), или DNS-проверка `check_dns` долго таймаутится на заблокированных `ui.com`/`ubnt.com`, или ждётся dpkg-lock от осиротевшего `apt` | Вторая сессия: `pstree -p $(pgrep -f unifi-update.sh \| head -1)`. В первой — `Ctrl+C` (на этом этапе ничего не менялось). Затем: `systemctl kill -s SIGKILL unattended-upgrades`, `systemctl reset-failed`, `systemctl disable unattended-upgrades`; убить осиротевшие `apt`/`dpkg`, при пустых процессах снять lock-файлы и `sudo dpkg --configure -a`; запустить заново. Пауза 3–4 минуты с последующим выводом = это `check_dns`, просто медленно |
 | Скрипт предлагает 10.x, а UniFi потом не стартует | UniFi 10.1+ требует Java 25 — на Ubuntu 20.04 его нет | Фиксируйте версию: `--custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb` |
 | `curl -sI https://dl.ui.com/...` → `HTTP/2 451` | Гео-блок «Unavailable For Legal Reasons» на стороне провайдера | Путь через `dl.ui.com` закрыт: архив Glenn R. через `--custom-url` (раздел 3, Способ 3, п. 3) или `file://` (п. 5) |
