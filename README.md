@@ -32,14 +32,28 @@ _Пока пусто._
 
 ```
 manualISASIS/
-├── README.md          ← это оглавление
-├── HISTORY.md         ← история запросов
-├── manuals/           ← мануалы по категориям
-│   └── network/       ← сеть и Wi-Fi
-├── assets/            ← скриншоты и схемы к мануалам
+├── README.md              ← это оглавление
+├── HISTORY.md             ← история запросов
+├── manuals/               ← мануалы по категориям
+│   └── network/           ← сеть и Wi-Fi
+├── assets/                ← скриншоты и схемы к мануалам
 │   └── network/
-└── .github/           ← шаблоны (если есть)
+├── references/            ← справочники и входные данные workflow
+└── .github/workflows/     ← зеркала файлов Ubiquiti через GitHub Actions
 ```
+
+## Зеркала файлов Ubiquiti (GitHub Actions)
+
+Серверы Ubiquiti отдают российским IP `403`/`451`, поэтому нужные файлы скачивают раннеры GitHub (IP вне РФ), проверяют sha256 и публикуют в релизах репозитория. Сервер забирает их обычным `curl -fL` без VPN.
+
+| Workflow | Что делает | Релиз | Входные данные |
+|---|---|---|---|
+| `fetch-unifi-deb.yml` | зеркалит `.deb` UniFi Network Application из архива `api.glennr.nl` | [`unifi-8.5.6`](https://github.com/m0xvi/manualISASIS/releases/tag/unifi-8.5.6) | `UNIFI_VERSION`, `EXPECTED_SHA256` в файле workflow |
+| `fetch-unifi-ap-firmware.yml` | зеркалит прошивки устройств (`.bin`) с `fw-download.ubnt.com` | [`unifi-ap-firmware`](https://github.com/m0xvi/manualISASIS/releases/tag/unifi-ap-firmware) | [`references/ap-firmware-wanted.txt`](references/ap-firmware-wanted.txt) — коды платформ, по одному на строку |
+
+Справочник кодов платформ и последних release-версий (≈625 строк, собирается автоматически job `catalog`): [`references/unifi-firmware-platform-codes.md`](references/unifi-firmware-platform-codes.md). Порядок действий описан в мануале: раздел 3, Способ 2 (контроллер) и раздел 4.1 (точки).
+
+> Ассеты релизов публичные. После использования зеркало удаляют: `gh release delete <tag> --repo m0xvi/manualISASIS --yes`.
 
 ## Правила для новых мануалов
 
