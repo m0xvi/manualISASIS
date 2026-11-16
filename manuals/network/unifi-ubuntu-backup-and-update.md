@@ -322,6 +322,7 @@ sudo bash unifi-update.sh --custom-url "https://api.glennr.nl/api/download/netwo
 | `Can we proceed with the firmware download/caching? (Y/n)` | **`N`** — то же самое |
 | Всё про Cloud / email / 2FA / remote access | `N` — облако из РФ недоступно |
 | `Would you like to provide another download link? (Y/n)` | Появится, если ссылка не скачалась: `Y` и вставить архивную ссылку (или `file:///...`, см. п. 5) |
+| `Do you want to keep the script on your system after completion? (Y/n)` | `Y` или `Enter`. При `N` скрипт **удалит собственный файл** по завершении — и следующий запуск начнётся с `bash: unifi-update.sh: No such file or directory` |
 
 Закладывайте 10–40 минут: цепочка MongoDB плюс скачивание ~150 МБ. Терминал не закрывать. Выйти из меню без изменений — пункт `7` (`Cancel Script`).
 
@@ -467,6 +468,7 @@ sudo journalctl -u unifi -n 50 --no-pager
 | `apt update` → `403` на `ui.com/downloads/unifi/debian` | RU IP заблокирован Ubiquiti **и** репозиторий больше не обновляется (пакеты не публикуются после 10.0.x) | `apt`-путь заброшен для всех: ставьте `.deb` напрямую (раздел 3, Способ 2/3) |
 | `apt install --only-upgrade unifi` → `Unable to locate package` / не находит новую версию | В репозитории нет индекса `Packages` | То же: прямой `.deb` с `dl.ui.com` |
 | Скрипт Glenn R. удалил сам себя и снова скачал битый файл | Локальная версия скрипта ниже актуальной → самообновление с `get.glennr.nl` | `sed -i '5s/9\.2\.6/9\.9\.9/' unifi-update.sh`, затем `bash -n` и запуск (раздел 3, Способ 3, п. 2) |
+| `bash: unifi-update.sh: No such file or directory` при новом запуске | Второе самоудаление: в финале прошлого запуска на `keep the script on your system after completion?` ответили `N` | Не ошибка. Заново: `curl -sO https://raw.githubusercontent.com/Primitiv0/unifi-installer-updater/main/unifi-update.sh`, патч версии, `bash -n`, запуск; в финале отвечать `Y` |
 | Скрипт предлагает 10.x, а UniFi потом не стартует | UniFi 10.1+ требует Java 25 — на Ubuntu 20.04 его нет | Фиксируйте версию: `--custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb` |
 | `curl -sI https://dl.ui.com/...` → `HTTP/2 451` | Гео-блок «Unavailable For Legal Reasons» на стороне провайдера | Путь через `dl.ui.com` закрыт: архив Glenn R. через `--custom-url` (раздел 3, Способ 3, п. 3) или `file://` (п. 5) |
 | Скачивание `.deb` внутри скрипта → `403` на `fw-download.ubnt.com` | Скрипт дошёл до третьего источника из четырёх; первые два — `dl.ui.com` | Проверьте `curl -sI https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb`; если `403`/`451` — ссылка из архива `api.glennr.nl` (раздел 3, Способ 3) |
