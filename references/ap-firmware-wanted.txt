@@ -1,0 +1,13 @@
+# Список кодов платформ Ubiquiti для зеркалирования прошивок.
+# Формат: один код на строку, опционально `:MAJOR` для ограничения ветки прошивки.
+# Код = поле `model` устройства в базе контроллера (db.device), см. manuals/network/unifi-ubuntu-backup-and-update.md §4.
+# Полный справочник кодов: references/unifi-firmware-platform-codes.md
+#
+# Изменение этого файла запускает workflow fetch-unifi-ap-firmware (job firmware):
+# раннер скачает .bin, сверит sha256 и приложит ассеты к релизу unifi-ap-firmware.
+# Строки с `#` и пустые игнорируются.
+
+U7LR
+U7LT
+BZ2
+BZ2LR

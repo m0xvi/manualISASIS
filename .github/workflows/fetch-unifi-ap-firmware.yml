@@ -10,12 +10,15 @@ name: fetch-unifi-ap-firmware
 # Поэтому точный код платформы берётся либо из контроллера (`model` в stat/device), либо из таблицы
 # references/unifi-firmware-platform-codes.md, которую собирает job `catalog` ниже.
 #
-# Запуск: Actions → fetch-unifi-ap-firmware → Run workflow → `platforms` = коды через запятую,
-# при необходимости с ограничением ветки: `UAL6:6`, `U7PG2:6`, `USL16P:6`.
+# Запуск (два способа, оба дают один результат):
+#  1. отредактировать references/ap-firmware-wanted.txt (один код на строку) и запушить — push триггерит job firmware;
+#  2. Actions → fetch-unifi-ap-firmware → Run workflow → `platforms` = коды через запятую.
+# Ограничить ветку прошивки можно суффиксом `:MAJOR`, например `U7LR:6`, `BZ2:4`.
 on:
   push:
     paths:
       - '.github/workflows/fetch-unifi-ap-firmware.yml'
+      - 'references/ap-firmware-wanted.txt'
   workflow_dispatch:
     inputs:
       platforms:
@@ -89,11 +92,32 @@ jobs:
 
   firmware:
     name: Mirror requested firmware
-    if: github.event_name == 'workflow_dispatch'
     needs: catalog
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine platform list
+        id: list
+        env:
+          INPUT: ${{ github.event.inputs.platforms }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${INPUT}" ]]; then
+            list="${INPUT}"
+            echo "источник: вход workflow_dispatch"
+          else
+            list="$(grep -vE '^[[:space:]]*(#|$)' references/ap-firmware-wanted.txt | tr '\n' ' ')"
+            echo "источник: references/ap-firmware-wanted.txt"
+          fi
+          list="$(printf '%s' "${list}" | tr -s ' \t,;' ',')"
+          list="${list#,}"; list="${list%,}"
+          if [[ -z "${list}" ]]; then echo "::error::список кодов платформ пуст"; exit 1; fi
+          echo "platforms=${list}"
+          echo "platforms=${list}" >> "${GITHUB_OUTPUT}"
+
       - name: Fetch release-channel catalog
         run: |
           set -euo pipefail
@@ -104,7 +128,7 @@ jobs:
       - name: Resolve, download, verify
         id: fw
         env:
-          PLATFORMS: ${{ github.event.inputs.platforms }}
+          PLATFORMS: ${{ steps.list.outputs.platforms }}
         run: |
           set -uo pipefail
           : > resolved.txt
