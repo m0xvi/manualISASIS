@@ -1,0 +1,64 @@
+name: fetch-unifi-ap-firmware
+
+# Зачем: из РФ кнопки Update в Web UI не работают (fw-download.ubnt.com / fw-update.ui.com отдают 403/451).
+# Раннеры GitHub (IP вне РФ) скачивают прошивки AP из release-канала и прикрепляют их к релизу репозитория.
+# Версии подобраны совместимыми с UniFi Network Application 8.5.6: линия 6.x для Wi-Fi 6 (U6-*), линия 4.x для UAP-AC (wave 1).
+on:
+  push:
+    paths:
+      - '.github/workflows/fetch-unifi-ap-firmware.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: U6-ENT
+            major: "6"
+          - platform: U6-IW
+            major: "6"
+          - platform: U6-MESH
+            major: "6"
+          - platform: UAP-AC-HD
+            major: "4"
+          - platform: UAP-AC-IW
+            major: "4"
+          - platform: UAP-AC-LR
+            major: "4"
+          - platform: UAP-AC-LITE
+            major: "4"
+    steps:
+      - name: Fetch firmware metadata and binary
+        id: fw
+        run: |
+          set -euo pipefail
+          api="https://fw-update.ui.com/api/firmware-latest?filter=eq~~platform~~${{ matrix.platform }}&filter=eq~~channel~~release&filter=eq~~version_major~~${{ matrix.major }}"
+          curl -fsS "${api}" -o meta.json
+          echo "--- metadata for ${{ matrix.platform }} ---"
+          jq -c '._embedded.firmware[0] | {version, sha256_checksum, href: ._links.data.href}' meta.json
+          href="$(jq -r '._embedded.firmware[0]._links.data.href // empty' meta.json)"
+          ver="$(jq -r '._embedded.firmware[0].version // empty' meta.json)"
+          sha="$(jq -r '._embedded.firmware[0].sha256_checksum // empty' meta.json)"
+          if [[ -z "${href}" ]]; then echo "::error::no release firmware for ${{ matrix.platform }} major ${{ matrix.major }}"; exit 1; fi
+          if [[ -z "${ver}" ]]; then ver="$(basename "${href}" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"; fi
+          curl -fL --retry 4 --retry-all-errors --connect-timeout 20 -o fw.bin "${href}"
+          if [[ -n "${sha}" ]]; then echo "${sha}  fw.bin" | sha256sum -c -; fi
+          ls -l fw.bin
+          cp fw.bin "${{ matrix.platform }}-${ver}.bin"
+          echo "version=${ver}" >> "${GITHUB_OUTPUT}"
+      - name: Publish to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create unifi-ap-firmware --repo "${GITHUB_REPOSITORY}" \
+            --title "UniFi AP firmware mirror (release channel)" \
+            --notes "Прошивки AP из release-канала fw-update.ui.com, скачаны раннерами GitHub и проверены по sha256. Линии: 6.x для U6-*, 4.x для UAP-AC-* (совместимы с Network Application 8.5.6)." \
+            || true
+          sleep 2
+          gh release upload unifi-ap-firmware "${{ matrix.platform }}-${{ steps.fw.outputs.version }}.bin" --repo "${GITHUB_REPOSITORY}" --clobber
