@@ -18,12 +18,12 @@
 
 ## 0. Ограничения для РФ — прочитать первым
 
-> **Коротко:** «кирпичей» нет, локальный контроллер и точки работают. Часть серверов Ubiquiti блокирует российские IP (`www.ui.com`, `fw-download.ubnt.com`), но **CDN `dl.ui.com`, откуда берутся `.deb` и прошивки, из РФ обычно открывается** — поэтому контроллер чаще всего можно обновить **без VPN**. Автообновление точек кнопкой в Web UI при этом всё равно не работает: оно ходит на заблокированный `fw-download.ubnt.com` (раздел 4).
+> **Коротко:** «кирпичей» нет, локальный контроллер и точки работают. Серверы Ubiquiti блокируют российские IP (`www.ui.com`, `fw-download.ubnt.com`, а у части провайдеров и `dl.ui.com` отвечает `451`), но **архив Glenn R. на `api.glennr.nl` (Нидерланды), `repo.mongodb.org` и GitHub из РФ открываются** — поэтому контроллер можно обновить **без VPN**. Автообновление точек кнопкой в Web UI при этом всё равно не работает: оно ходит на заблокированный `fw-download.ubnt.com` (раздел 4).
 
 | Что | Статус в РФ | Что делать |
 |---|---|---|
 | Локальный контроллер на Ubuntu + принятые AP | ✅ Работают как обычно | Можно обновлять |
-| **`dl.ui.com`** — CDN с `.deb` и прошивками | ✅ По сообщениям из РФ **не заблокирован** (в отличие от `www.ui.com` и `fw-download.ubnt.com`) | **Основной источник без VPN.** Проверить: `curl -sI https://dl.ui.com/unifi/<версия>/unifi_sysvinit_all.deb \| head -1` |
+| **`dl.ui.com`** — CDN с `.deb` и прошивками | ⚠️ Зависит от провайдера: у части открывается, у других — `HTTP/2 451 Unavailable For Legal Reasons` (гео-блок по закону, проверено 16.11.2026) | Проверить первой командой из «Проверка за 30 секунд». При `451` основной источник без VPN — **архив Glenn R.** на `api.glennr.nl` (раздел 3) |
 | Серверы прошивок `fw-download.ubnt.com`, `fw-update.ubnt.com`, `fw-update.ui.com` | ❌ `403 Forbidden` / таймаут с RU IP | Качать `.bin` через VPN/прокси или обновлять офлайн (раздел 4) |
 | APT-репозиторий `www.ui.com/downloads/unifi/debian` | ❌ `403` с RU IP **и** фактически мёртв для всех: Ubiquiti перестала публиковать там пакеты после 10.0.x, индекс `Packages` пустой | `apt install unifi` больше не рабочий путь. Только прямой `.deb` (раздел 3, Способ 2) |
 | `api.glennr.nl` — архив Glenn R. (Нидерланды) | ⚠️ Проверить у себя: `curl -s "https://api.glennr.nl/api/network-latest?version=latest"` | Запасной источник `.deb` без VPN (раздел 3, Способ 2) |
@@ -143,9 +143,18 @@ curl -s "https://api.glennr.nl/api/network-latest?version=latest"
 curl -sI https://fw-download.ubnt.com/ | head -1
 ```
 
-Что должно быть: `HTTP/2 200` (или `301`/`302`) на `dl.ui.com` и `repo.mongodb.org`, JSON вида `{"latest_release":"10.6.109"}` на `api.glennr.nl`. На `fw-download.ubnt.com` из РФ ожидаемо `403` — это нормально и **не мешает**: скрипт Glenn R. пробует этот хост только третьим по счёту (см. Способ 3).
+Что должно быть: `HTTP/2 200` (или `301`/`302`) на `repo.mongodb.org`, JSON вида `{"latest_release":"10.6.109"}` на `api.glennr.nl`, `avx` в выводе последней команды. На `fw-download.ubnt.com` из РФ ожидаемо `403` — это нормально и **не мешает**: скрипт Glenn R. пробует этот хост только третьим по счёту (см. Способ 3).
 
-Если `dl.ui.com` отвечает `200` — **VPN не нужен ни для контроллера, ни для скрипта**.
+Про `dl.ui.com` возможны два исхода:
+
+- `HTTP/2 200` — **VPN не нужен вообще**: скрипт скачает `.deb` первым же источником из своего списка.
+- `HTTP/2 451` (Unavailable For Legal Reasons) — гео-блок по «юридическим причинам», встречается у части российских провайдеров. Тогда рабочий источник без VPN — **архив Glenn R.**: проверьте его так же и подставьте ссылку скрипту через `--custom-url` (раздел 3, Способ 3, п. 3):
+
+```bash
+curl -sIL "https://api.glennr.nl/api/download/network/8.5.6/r/ac46-debian-8.5.6-6fddd742-ccbb-46ec-a892-2b8baeedf643.deb" | grep -Ei '^HTTP/|content-length|location' | head -6
+```
+
+`HTTP/2 200` и `content-length` порядка 150–200 млн байт — архив отдаёт файл, можно обновляться без VPN.
 
 ### Способ 1 — APT (в 2026 не работает, только для справки)
 
@@ -256,26 +265,45 @@ sudo bash unifi-update.sh
 
 ```bash
 sudo bash unifi-update.sh
-sudo bash unifi-update.sh --custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb
+sudo bash unifi-update.sh --custom-url "https://api.glennr.nl/api/download/network/8.5.6/r/ac46-debian-8.5.6-6fddd742-ccbb-46ec-a892-2b8baeedf643.deb"
 ```
 
-первый запуск → `7.5.187`, второй → последняя 8.x. Ключ `--custom-url` жёстко фиксирует версию и источник файла — полезно, когда нужной версии в меню нет или основной CDN закрыт (можно подсунуть ссылку из архива Glenn R. или локальный HTTP-сервер, см. ниже).
+первый запуск → в меню `7.5.187`, второй → последняя 8.x из архива Glenn R. Если у вас `dl.ui.com` отвечает `200`, вторую команду можно упростить до `--custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb`; при `451` оставляйте архивную ссылку. Ключ `--custom-url` жёстко фиксирует версию и источник файла — меню версий при этом не показывается, а скачанный файл скрипт проверяет сам (пакет `unifi`, версия как в ссылке).
 
 **4. Почему VPN обычно не нужен.** Скрипт перебирает источники `.deb` в таком порядке:
 
 1. `https://dl.ui.com/unifi/<версия>/unifi_sysvinit_all.deb` ← пробуется **первым**
 2. `https://dl.ui.com/unifi/<версия-release>/unifi_sysvinit_all.deb`
 3. `https://fw-download.ubnt.com/...` ← из РФ `403`, но к этому шагу дело обычно не доходит
-4. `https://api.glennr.nl/api/download/network/...` ← архив Glenn R.
+4. `https://api.glennr.nl/api/download/network/...` ← архив Glenn R. (Нидерланды)
 
-Заблокированный Ubiquiti-хост — только третий в списке, поэтому при живом `dl.ui.com` обновление проходит без VPN.
+Заблокированный Ubiquiti-хост — только третий в списке, поэтому при живом `dl.ui.com` обновление проходит без VPN. Если же провайдер отдаёт на `dl.ui.com` код `451` (гео-блок, проверено на реальной сети 16.11.2026), шаги 1–3 отпадают и скрипт доходит до архива — но надёжнее сразу указать архивную ссылку через `--custom-url` (п. 3 выше): скрипт скачает файл из Нидерландов и сам проверит, что это пакет `unifi` нужной версии.
 
-**5. Если `.deb` уже скачан вручную** (Способ 2) и все внешние источники закрыты — раздайте его локально и подсуньте скрипту:
+**Вопросы скрипта и что отвечать** (после выбора пункта `1` в главном меню):
+
+| Вопрос скрипта | Ответ |
+|---|---|
+| `Do you want to add "127.0.0.1 localhost" to your /etc/hosts file? (Y/n)` | `Enter` (Y) |
+| `Do you allow the script to remove the broken packages? (Y/n)` | `Y` — у вас сломан репозиторий MongoDB 4.4 с истёкшим ключом |
+| `Do you want to proceed with uninstalling the unsupported JAVA version(s)? (y/N)` | `y` — уберёт старые OpenJDK 8/11, поставит 17 |
+| `Do you want to continue the script? (y/N)` | `y` |
+| Шаги цепочки MongoDB `4.4 → 5.0 → 6.0 → 7.0` | `Y`/`Enter` на каждом |
+| `The script will keep the latest 5 backup files, do you want to free up the disk space? (y/N)` | `N` — бэкапы не трогать |
+| `Can we continue with the device upgrade? (Y/n)` | **`N`** — прошивки AP лежат на заблокированных хостах, точки обновляем вручную (раздел 4) |
+| `Can we proceed with the firmware download/caching? (Y/n)` | **`N`** — то же самое |
+| Всё про Cloud / email / 2FA / remote access | `N` — облако из РФ недоступно |
+| `Would you like to provide another download link? (Y/n)` | Появится, если ссылка не скачалась: `Y` и вставить архивную ссылку (или `file:///...`, см. п. 5) |
+
+Закладывайте 10–40 минут: цепочка MongoDB плюс скачивание ~150 МБ. Терминал не закрывать. Выйти из меню без изменений — пункт `7` (`Cancel Script`).
+
+**5. Если `.deb` уже лежит на сервере** (скачан через зарубежный хост, Способ 2) и все внешние источники закрыты — скормите его скрипту напрямую через `file://`:
 
 ```bash
-cd ~ && python3 -m http.server 8000 &
-sudo bash unifi-update.sh --custom-url http://127.0.0.1:8000/unifi_8.5.6.deb
+cp ~/unifi_8.5.6.deb /root/8.5.6-deb
+sudo bash unifi-update.sh --custom-url file:///root/8.5.6-deb
 ```
+
+> Странное имя `8.5.6-deb` — не опечатка. Скрипт вычленяет версию из самой ссылки: берёт первую цифру и режет строку по первому `-` и первому `/`. Любые цифры в пути или порту (`http://127.0.0.1:8000/...`) собьют его с толку, а `file:///root/8.5.6-deb` разбирается ровно в `8.5.6`. Проверку «есть ли в ссылке `.deb`» имя тоже проходит (`-deb`). После скачивания скрипт сверит содержимое: пакет должен быть `unifi` той же версии — иначе попросит другую ссылку.
 
 > ⚠️ Скрипт и `apt` работают на самом сервере: VPN, включённый только на рабочей станции, серверу не помогает. Если без VPN никак — ставьте клиент на сервер (Outline) либо качайте файл на зарубежном хосте и передавайте `scp` (Способ 2, п. 3).
 
@@ -412,7 +440,8 @@ sudo journalctl -u unifi -n 50 --no-pager
 | `apt install --only-upgrade unifi` → `Unable to locate package` / не находит новую версию | В репозитории нет индекса `Packages` | То же: прямой `.deb` с `dl.ui.com` |
 | Скрипт Glenn R. удалил сам себя и снова скачал битый файл | Локальная версия скрипта ниже актуальной → самообновление с `get.glennr.nl` | `sed -i '5s/9\.2\.6/9\.9\.9/' unifi-update.sh`, затем `bash -n` и запуск (раздел 3, Способ 3, п. 2) |
 | Скрипт предлагает 10.x, а UniFi потом не стартует | UniFi 10.1+ требует Java 25 — на Ubuntu 20.04 его нет | Фиксируйте версию: `--custom-url https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb` |
-| Скачивание `.deb` внутри скрипта → `403` на `fw-download.ubnt.com` | Скрипт дошёл до третьего источника из четырёх; первые два — `dl.ui.com` | Проверьте `curl -sI https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb`; если `403` — ссылка из архива `api.glennr.nl` (Способ 2, п. 2) |
+| `curl -sI https://dl.ui.com/...` → `HTTP/2 451` | Гео-блок «Unavailable For Legal Reasons» на стороне провайдера | Путь через `dl.ui.com` закрыт: архив Glenn R. через `--custom-url` (раздел 3, Способ 3, п. 3) или `file://` (п. 5) |
+| Скачивание `.deb` внутри скрипта → `403` на `fw-download.ubnt.com` | Скрипт дошёл до третьего источника из четырёх; первые два — `dl.ui.com` | Проверьте `curl -sI https://dl.ui.com/unifi/8.5.6/unifi_sysvinit_all.deb`; если `403`/`451` — ссылка из архива `api.glennr.nl` (раздел 3, Способ 3) |
 | MongoDB 7.0/8.0 не устанавливается или падает при старте | CPU без AVX (или виртуалка без проброса AVX) | `grep -o -m1 avx /proc/cpuinfo`; пусто → оставайтесь на MongoDB 4.4 и UniFi ≤ 8.0.x |
 | `EXPKEYSIG ... MongoDB 4.4 Release Signing Key` | Ключ репозитория MongoDB 4.4 истёк, репо отключено | Не чинить 4.4 — переходите на MongoDB 7.0/8.0 через Glenn R. скрипт |
 | `No such file or directory` на `/var/lib/unifi/data/backup/` | У вас UniFi 7.x, путь `/usr/lib/unifi/data/backup/` | Определите путь через `systemctl cat unifi \| grep dbpath` |
