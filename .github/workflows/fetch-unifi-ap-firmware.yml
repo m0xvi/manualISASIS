@@ -138,13 +138,21 @@ jobs:
             key="${item%%:*}"; major="${item##*:}"
             [[ "${major}" == "${item}" ]] && major=""
             lkey="$(printf '%s' "${key}" | tr '[:upper:]' '[:lower:]')"
+            # резолвинг в три стадии: точный код платформы -> подстрока в platform -> подстрока в product.
+            # Точное совпадение обязательно первым: иначе короткий код (BZ2) матчит длинный (BZ2LR) и теряется.
             jq -c --arg k "${lkey}" --arg m "${major}" '
-              [ ._embedded.firmware[]
-                | select( ((.platform // "") | ascii_downcase | contains($k))
-                       or ((.product   // "") | ascii_downcase | contains($k)) ) ]
-              | map(select($m == "" or ((.version_major | tostring) == $m)))
-              | sort_by((.version_major | tonumber? // 0), (.version_minor | tonumber? // 0), (.version_patch | tonumber? // 0))
-              | reverse
+              def maj: select($m == "" or ((.version_major | tostring) == $m));
+              def plat_exact: select((.platform // "") | ascii_downcase | . == $k);
+              def plat_sub: select((.platform // "") | ascii_downcase | contains($k));
+              def prod_sub: select((.product // "") | ascii_downcase | contains($k));
+              def vsort: sort_by([(.version_major | tonumber? // 0),
+                                  (.version_minor | tonumber? // 0),
+                                  (.version_patch | tonumber? // 0)]) | reverse;
+              ._embedded.firmware as $all
+              | ([ $all[] | plat_exact | maj ]) as $exact
+              | (if ($exact | length) > 0 then $exact else ([ $all[] | plat_sub | maj ]) end) as $byp
+              | (if ($byp | length) > 0 then $byp else ([ $all[] | prod_sub | maj ]) end)
+              | vsort
             ' catalog.json > cand.json
             echo "--- candidates for ${item} ---"
             jq -c '.[] | {platform, product, version, file_size}' cand.json | head -20
