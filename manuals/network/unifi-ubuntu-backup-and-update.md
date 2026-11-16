@@ -357,11 +357,15 @@ docker compose up -d
 ## 4. Последовательное обновление точек доступа
 
 > **Правило:** обновляйте **по одной AP**. Дождитесь статуса `Connected` и стабильной работы, затем берите следующую.
+>
+> **Обновлять точки не обязательно.** Контроллер 8.x управляет AP и на старых прошивках; обновление — это функции и гигиена, а не требование совместимости. В РФ кнопка **Update не работает даже после обновления контроллера**: устройства и контроллер ходят за прошивками на `fw-download.ubnt.com` / `fw-update.ui.com`, которые отдают RU IP `403`/`451`. Рабочие пути в РФ — Custom Upgrade через локальный URL или SSH (ниже), файл прошивки заранее зеркалят (раздел 3, Способ 2: workflow в этом репозитории) или качают через зарубежный хост.
+>
+> Целевую версию прошивки для каждой модели берите из самого контроллера: `Settings → System → Advanced → Device Update Cache → Available Updates` (считается офлайн, из встроенных таблиц) — под неё и ищите `.bin`.
 
 ### Подготовка
 
 1. Выключите автообновления: `Settings → System → Updates`.
-2. Скачайте прошивку `.bin` для вашей модели AP. Кнопка **Update** в Web UI ходит на `fw-download.ubnt.com` → из РФ `403`, поэтому прошивку берём напрямую с `dl.ui.com` (этот CDN из РФ обычно открывается, VPN не нужен):
+2. Скачайте прошивку `.bin` для вашей модели AP и целевой версии (из Device Update Cache). Источники в порядке предпочтения для РФ: релиз-зеркало этого репозитория (workflow скачивает с `fw-download.ubnt.com` своим раннером); зарубежный хост/Outline + `scp`; напрямую `dl.ui.com/unifi/firmware/…`, если у вашего провайдера он не отдаёт `451`. Учтите: API `fw-update.ui.com` оперирует непрозрачными кодами платформ (`U7PG2`, `UAL6`, `USL16P`…), не совпадающими с именами в Web UI, — пустой ответ `firmware: []` значит, код подобран неверно;
 
 ```bash
 curl -sI https://dl.ui.com/unifi/firmware/U7PG2/6.6.77/ | head -1
@@ -377,6 +381,32 @@ curl -o ~/U7PG2.bin https://dl.ui.com/unifi/firmware/U7PG2/<версия>/<им�
 `Settings → System → Advanced → Device Update Cache`
 
 ![Device Update Cache: Available / Cached Updates](../../assets/network/unifi/03-device-update-cache.png)
+
+### Зеркало прошивок через GitHub Actions (когда `.bin` не скачивается)
+
+Тот же приём, что и для `.deb` контроллера (раздел 3, Способ 2): файл скачивает раннер GitHub (IP вне РФ), проверяет sha256 и публикует в релизе репозитория; сервер забирает его `curl -fL` без VPN.
+
+**Шаг 1. Узнать код платформы своего устройства.** API Ubiquiti понимает только внутренний код (`UAL6`, `U7PG2`, `USL16P`…), названия из Web UI (`U6-Lite`, `UAP-AC-LR`) в нём не ищутся, а фильтра по `model` нет вовсе (HTTP 400 `Column model is not allowed`). Код — это поле `model` устройства в базе контроллера:
+
+```bash
+mongo --port 27117 ace --eval 'db.device.find({}, {name:1, model:1, type:1, version:1, ip:1}).forEach(printjson)'
+```
+
+Полный справочник кодов и последних release-версий (собирается автоматически, job `catalog`): [references/unifi-firmware-platform-codes.md](../../references/unifi-firmware-platform-codes.md). Ориентиры (сверяйте со своим `model`): `BZ2`/`BZ2LR` — UAP/UAP-LR, `U2IW` — UAP-AC-In-Wall, `U7PG2` — UAP-AC-Pro (gen2), `U7NHD` — UAP-nanoHD, `U7HD` — UAP-AC-HD, `U7LT` — UAP-AC-Lite, `U7LR` — UAP-AC-LR, `U7MP`/`U7MSH` — UAP-AC-M / M-Pro, `U6ENT` — U6-Enterprise, `U6EXT` — U6-Extender, `U6IW` — U6-In-Wall, `UAL6` — U6-Lite, `UALR6` — U6-LR, `UAPL6` — U6-Plus, `UAM6` — U6-Mesh; коммутаторы `USL8A`/`USL16P`/`USL24P`/`US24P250`, шлюзы `UGW3`/`UGW4`/`UXG`/`UXGPRO`, консоли `UDM`/`UDMPRO`.
+
+**Шаг 2. Запустить workflow.** В репозитории: `Actions → fetch-unifi-ap-firmware → Run workflow`, поле `platforms` — коды через запятую, при необходимости с ограничением ветки прошивки: `UAL6:6,U7PG2:6,USL16P:7`. Итог — ассеты в релизе [`unifi-ap-firmware`](https://github.com/m0xvi/manualISASIS/releases/tag/unifi-ap-firmware) вида `UAL6-6.7.57.bin`, плюс summary запуска с готовыми `curl`-командами.
+
+**Шаг 3. Забрать на сервер и раздать точкам:**
+
+```bash
+mkdir -p ~/firmware && cd ~/firmware
+curl -fL -O https://github.com/m0xvi/manualISASIS/releases/download/unifi-ap-firmware/UAL6-6.7.57.bin
+python3 -m http.server 8081
+```
+
+**Шаг 4.** Обновить точку: Способ 2 (Custom Upgrade, URL `http://<IP-контроллера>:8081/<имя>.bin`) или Способ 1б/3 (SSH `upgrade <URL>` / SCP). Публичный URL релиза GitHub точка тоже достанет напрямую, если у неё есть выход в интернет и `github.com` не заблокирован провайдером: тогда шаг 3 не нужен, подставляйте ссылку из релиза сразу в `upgrade`/Custom Upgrade.
+
+> После обновления всех точек уберите зеркало: `gh release delete unifi-ap-firmware --repo m0xvi/manualISASIS --yes` (ассеты публичные — не оставляйте их висеть без нужды).
 
 ### Способ 1 — Web UI, по одной (если сервер прошивок доступен)
 
@@ -450,7 +480,7 @@ sudo journalctl -u unifi -n 50 --no-pager
 
 - `ii  unifi  8.5.6-…` — версия из целевой;
 - `active (running)` у `unifi.service`; первый запуск после миграции долгий;
-- MongoDB может остаться **4.4** — это норма: UniFi 8.1–8.5 поддерживают до 7.0, но не требуют её, скрипт цепочку не гонит, если минимум (3.6) выполнен;
+- MongoDB может остаться на старой версии (**3.6** или **4.4** в реальном прогоне) — это норма: UniFi 8.1–8.5 поддерживают до 7.0, но не требуют её, скрипт цепочку не гонит, если минимум (3.6) выполнен. Помните, что 3.6/4.4 давно EOL — планируйте MongoDB 7.0 вместе с переездом на Ubuntu 22.04+;
 - Java: `ii openjdk-17-jre-headless` (или `temurin-17-jre`); старые 8/11 скрипт предлагает снести отдельным вопросом;
 - `dbpath` в `systemctl cat unifi` на 8.x может указывать на `/var/lib/unifi/data/db` — используйте этот путь для новых бэкапов;
 - в хвосте журнала нет `ERROR`/`FATAL`.
