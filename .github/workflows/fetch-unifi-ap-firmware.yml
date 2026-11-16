@@ -55,7 +55,7 @@ jobs:
             echo
             echo "Автогенерация: workflow \`fetch-unifi-ap-firmware\` (job \`catalog\`), источник —"
             echo "\`https://fw-update.ui.com/api/firmware-latest?filter=eq~~channel~~release\`."
-            echo "Дата сборки: $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+            echo "Обновляется автоматически: коммит создаётся только при реальном изменении версий в каталоге."
             echo
             echo "Поле \`platform\` — это то, что API Ubiquiti понимает под моделью; названия из Web UI"
             echo "(U6-Lite, UAP-AC-LR…) в API не ищутся. Для устройств UniFi \`product\` = \`unifi-firmware\`."
