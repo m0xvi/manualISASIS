@@ -2,6 +2,7 @@
 
 Автогенерация: workflow `fetch-unifi-ap-firmware` (job `catalog`), источник —
 `https://fw-update.ui.com/api/firmware-latest?filter=eq~~channel~~release`.
+Обновляется автоматически: коммит создаётся только при реальном изменении версий в каталоге.
 
 Поле `platform` — это то, что API Ubiquiti понимает под моделью; названия из Web UI
 (U6-Lite, UAP-AC-LR…) в API не ищутся. Для устройств UniFi `product` = `unifi-firmware`.
