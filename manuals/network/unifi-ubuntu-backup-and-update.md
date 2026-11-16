@@ -47,6 +47,24 @@
 - [ ] Подготовлен VPN/прокси для скачивания прошивок (если RU IP).
 - [ ] Записаны текущие версии: контроллер (`Settings → System → About`) и AP (`Devices`).
 
+### Диагностика: узнайте свои версии и пути (5 минут)
+
+```bash
+lsb_release -a
+dpkg -l | grep -E 'unifi|mongodb'
+systemctl cat unifi | grep -i dbpath
+```
+
+Что смотреть:
+
+- **Версия UniFi** — из `dpkg -l` (например, `7.2.97`).
+- **Путь к данным** — из `dbpath`:
+  - `/usr/lib/unifi/data/db` → UniFi **7.x**, бэкапы в `/usr/lib/unifi/data/backup/`
+  - `/var/lib/unifi/data/db` → UniFi **8.x+**, бэкапы в `/var/lib/unifi/data/backup/`
+- **Ubuntu 20.04** — стандартная поддержка закончилась в мае 2025. UniFi **9.x** требует Ubuntu 22.04+ и MongoDB 8.0. На Ubuntu 20.04 ставьте UniFi **8.x** (MongoDB 7.0) или сначала обновите Ubuntu до 22.04.
+
+> ⚠️ **Не вставляйте в терминал строки с комментариями** (`# ...`, особенно на русском). В `zsh` это ломает команды: `apt` начнёт искать пакеты с именами `#`, `если`, `попросит` и т.д. Комментарии — только в мануал, не в консоль.
+
 ---
 
 ## 2. Бэкап контроллера
@@ -70,25 +88,27 @@
 
 ### Способ Б — файлы на сервере (надёжно)
 
-```bash
-# Автобэкапы контроллера
-sudo ls -lh /var/lib/unifi/data/backup/
-sudo cp -a /var/lib/unifi/data/backup/ /root/unifi-backup-$(date +%F)/
+Сначала определите путь к данным (см. диагностику в разделе 1). Дальше — под ваш путь:
 
-# Ключи и системные файлы
-sudo cp -a /var/lib/unifi/data/keystore /root/unifi-backup-$(date +%F)/ 2>/dev/null
-sudo cp -a /var/lib/unifi/data/system.properties /root/unifi-backup-$(date +%F)/ 2>/dev/null
+```bash
+# UniFi 7.x (путь /usr/lib/unifi/data)
+sudo mkdir -p /root/unifi-backup-$(date +%F)
+sudo cp -a /usr/lib/unifi/data/backup/ /root/unifi-backup-$(date +%F)/
+sudo cp -a /usr/lib/unifi/data/keystore /root/unifi-backup-$(date +%F)/ 2>/dev/null
+sudo cp -a /usr/lib/unifi/data/system.properties /root/unifi-backup-$(date +%F)/ 2>/dev/null
+
+# UniFi 8.x+ (путь /var/lib/unifi/data) — те же команды, замените /usr/lib на /var/lib
 ```
+
+> Ошибка `No such file or directory` на `/var/lib/unifi/data/backup/` означает, что у вас UniFi 7.x — используйте `/usr/lib/unifi/data/backup/`.
 
 ### Способ В — дамп MongoDB (полный клон)
 
+> **Важно:** `mongodump` работает с **запущенным** MongoDB. Не останавливайте `unifi` перед дампом — иначе `mongod` тоже встанет и дамп упадёт. MongoDB контроллера слушает порт **27117**, а не 27017.
+
 ```bash
-# Остановить контроллер на время дампа (рекомендуется)
-sudo systemctl stop unifi
-
-mongodump --db unifi --out /root/unifi-mongo-$(date +%F)
-
-sudo systemctl start unifi
+which mongodump
+mongodump --port 27117 --db unifi --out /root/unifi-mongo-$(date +%F)
 ```
 
 > Если контроллер в VM — перед обновлением сделайте снапшот VM. Это самый быстрый откат.
@@ -111,24 +131,35 @@ sudo systemctl status unifi
 
 ### Способ 2 — вручную `.deb` (для РФ)
 
-1. Скачайте `.deb` через VPN с `dl.ui.com` или из официального репозитория Ubiquiti.
-2. На сервере:
+1. Скачайте `.deb` через VPN (например, Outline) с `dl.ui.com` или из официального репозитория Ubiquiti. Файл может называться как угодно — не обязательно `unifi_sysvinit_all.deb`.
+2. Проверьте, что скачали именно UniFi:
 
 ```bash
-sudo dpkg -i unifi_sysvinit_all.deb
-sudo apt -f install   # если попросит зависимости
+dpkg-deb -f <имя-файла>.deb Package Version
+```
+
+3. Установите по реальному имени файла (подстановка `*` поможет с длинными именами):
+
+```bash
+sudo dpkg -i <имя-файла>.deb
+sudo apt -f install
 sudo systemctl restart unifi
 ```
 
+> Ошибка `dpkg: cannot access archive 'unifi_sysvinit_all.deb'` означает, что файла с таким именем нет. Смотрите `ls ~/` — файл лежит под другим именем.
+
 ### Способ 3 — Glenn R. Easy Update Script
 
+> ⚠️ **Не** `curl https://glennr.nl/s/unifi-easy-update | bash` — это веб-страница (HTML), а не скрипт. Получите `bash: line 1: !DOCTYPE` — значит, скачали HTML. Правильная команда:
+
 ```bash
-curl -s https://glennr.nl/s/unifi-easy-update | sudo bash
+curl -sO https://get.glennr.nl/unifi/update/unifi-update.sh
+bash unifi-update.sh
 ```
 
 Скрипт сам скачает `.deb`, обновит MongoDB при необходимости и перезапустит контроллер.
 
-> ⚠️ **MongoDB:** UniFi Network 8.x требует MongoDB 7.0, 9.x–10.x — MongoDB 8.0. Если после обновления контроллер не стартует — проверьте `mongosh --version` и `sudo journalctl -u unifi -f`.
+> ⚠️ **MongoDB и версии:** UniFi 7.x → MongoDB 4.4, 8.x → MongoDB 7.0, 9.x → MongoDB 8.0. Не прыгайте с 7.x сразу на 9.x без промежуточного 8.x — MongoDB не умеет скакать через версии. Если после обновления контроллер не стартует — проверьте `mongosh --version` и `sudo journalctl -u unifi -f`.
 
 ### Docker (если контроллер в контейнере)
 
@@ -212,7 +243,14 @@ ssh <user>@<IP-точки> "syswrapper.sh upgrade2 &"
 
 | Симптом | Причина | Решение |
 |---|---|---|
-| `apt update` → `403` | RU IP заблокирован на `apt.artifacts.ui.com` | Способ 2/3 из раздела 3 |
+| `apt update` → `403` на `ui.com/downloads/unifi/debian` | RU IP заблокирован Ubiquiti | Способ 2/3 из раздела 3 (VPN + `.deb` / Glenn R.) |
+| `EXPKEYSIG ... MongoDB 4.4 Release Signing Key` | Ключ репозитория MongoDB 4.4 истёк, репо отключено | Не чинить 4.4 — переходите на MongoDB 7.0/8.0 через Glenn R. скрипт |
+| `No such file or directory` на `/var/lib/unifi/data/backup/` | У вас UniFi 7.x, путь `/usr/lib/unifi/data/backup/` | Определите путь через `systemctl cat unifi \| grep dbpath` |
+| `mongodump` → `connection refused` | MongoDB контроллера на порту 27117, или `unifi` остановлен | `mongodump --port 27117 ...`, не останавливать `unifi` перед дампом |
+| `dpkg: cannot access archive 'unifi_sysvinit_all.deb'` | Файл называется иначе | `ls ~/`, `dpkg-deb -f <файл> Package Version`, установка по `*` |
+| `bash: line 1: !DOCTYPE` от Glenn R. | Скачали HTML-страницу `glennr.nl/s/...`, а не скрипт | `curl -sO https://get.glennr.nl/unifi/update/unifi-update.sh && bash unifi-update.sh` |
+| `apt` ищет пакеты `#`, `если`, `попросит` | Вставлена строка с комментарием (особенно в `zsh`) | Не вставляйте комментарии в терминал; `apt -f install` — отдельной строкой без `#` |
+| `zsh: command not found: #` | Вставлена строка-комментарий `# ...` | Комментарии — только в мануал, в консоль — только команды |
 | Кнопка Update на AP не работает | `fw-download.ubnt.com` → `403` | Custom Upgrade или SSH/SCP (раздел 4) |
 | После обновления нет доступа | Вход только через UI.com SSO | Зайдите локальным Super Admin |
 | Контроллер не стартует после обновления | Несовпадение MongoDB | Обновите MongoDB до 7.0/8.0, смотрите `journalctl -u unifi` |
