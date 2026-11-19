@@ -22,7 +22,9 @@ _Пока пусто — добавляйте новые мануалы в `manu
 
 ### Windows / Рабочие станции
 
-_Пока пусто — добавляйте новые мануалы в `manuals/windows/`._
+| Мануал | Что внутри |
+|---|---|
+| [BGInfo через GPO: обои и разные конфигурации для групп](manuals/windows/bginfo-gpo-wallpaper.md) | Почему «залипает» чужая картинка, корректные пути и кэш обоев Windows, доставка через GPP, Security Filtering с учётом MS16-072, Item-Level Targeting, loopback, аналоги (Desktop Info, Rainmeter, PowerShell) |
 
 ### Прочее
 
